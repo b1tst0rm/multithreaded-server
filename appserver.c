@@ -14,7 +14,7 @@
 
 void main(int argc, char **argv)
 {
-        int num_workerthreads, num_accts, transac_attempt;
+        int num_workerthreads, num_accts, transac_attempt, cmd_retval;
         int requestID = 0;
         char output_filename[MAX_FILENAME_LEN];
         char cwd[PATH_MAX]; // PATH_MAX from limits.h
@@ -75,22 +75,18 @@ void main(int argc, char **argv)
 int handle_request(char *request, int *id)
 {
         if (strcmp(request, "END") == 0) {
-                exit_program();
+                end();
                 return 1; 
         } else if (strncmp(request, "CHECK", 5) == 0) {
                 *id = *id + 1;
+                check();
                 return 1;
         } else if (strncmp(request, "TRANS", 5) == 0) {
                 *id = *id + 1;
+                trans();
                 return 1;
         } else if (strncmp(request, "HELP", 4) == 0) {
-                printf("~ Help Desk ~\n");
-                printf("CHECK <accountid>\n   Returns: <requestID> BAL "
-                       "<balance>\n");
-                printf("TRANS <acct1> <amount1> <acct2> <amount2> ...\n   "
-                       "Returns: <requestID> OK on success or <requestID> ISF "
-                       "<acctid> on first failed account\n");
-                printf("HELP\n   Returns: this information\n");
+                help();
                 return 0;
         } else {
                 // Disallowed request
@@ -102,11 +98,34 @@ void handle_interrupt()
 {
         printf("\n\nCTRL-C ignored. "
                "Please use the END command to exit program.\n\n");
+        return;
 }
 
-void exit_program()
+int check()
+{
+        return 0;
+}
+
+int trans()
+{
+        return 0;
+}
+
+void end()
 {
         printf("Waiting for all threads to finish...\n");
         printf("Cleaning up and exiting program, goodbye.\n");
         exit(EXIT_SUCCESS);
+}
+
+void help()
+{
+        printf("~ Help Desk ~\n");
+        printf("CHECK <accountid>\n   Returns: <requestID> BAL "
+               "<balance>\n");
+        printf("TRANS <acct1> <amount1> <acct2> <amount2> ...\n   "
+               "Returns: <requestID> OK on success or <requestID> ISF "
+               "<acctid> on first failed account\n");
+        printf("HELP\n   Returns: this information\n");
+        return;
 }
