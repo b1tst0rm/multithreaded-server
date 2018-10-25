@@ -2,7 +2,7 @@
 
 #include "Bank.h"
 #include <stdlib.h>
-
+#include <unistd.h>
 
 int *BANK_accounts;	//Array for storing account values
 
