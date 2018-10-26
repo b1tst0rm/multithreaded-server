@@ -9,6 +9,7 @@
 #include "appserver.h"
 
 #define PROMPT "> "
+#define OUTPUT "< "
 #define MAX_INPUT_LEN 100
 #define MAX_FILENAME_LEN 100
 
@@ -50,8 +51,24 @@ void main(int argc, char **argv)
         // Prevent keyboard interrupts
         signal(SIGINT, handle_interrupt);
 
-        printf("\nReady to accept input.\n");
+        printf("\nInitializing bank accounts.\n");
+        if (initialize_accounts(num_accts) == 0) {
+                perror("Failed to initialize accounts.");
+                exit(EXIT_FAILURE);
+        }
+
+        printf("Ready to accept input.\n");
         
+        // Create a function that contains a while loop so that the
+        // threads continue to work until a global variable or other integer
+        // changes (end would change this get the threads to stop)
+        // Have a for loop to initialize all these threads
+        // Need linked list of structs containing account id and mutex lock
+        // The linked list itself must have a lock on it
+        //
+        // The linked list is created in main thread and passed as an argument
+        // to the worker threads' function
+                
         while (1) {
                 printf("%s", PROMPT);
                 fgets(user_input, MAX_INPUT_LEN, stdin);
@@ -61,10 +78,10 @@ void main(int argc, char **argv)
                 transac_attempt = handle_request(user_input, &requestID);
                 
                 if (transac_attempt == 1) {
-                        printf("ID %d\n", requestID);
+                        printf("%sID %d\n", OUTPUT, requestID);
                 } else if (transac_attempt < 0) {
-                        printf("Invalid request. Supports CHECK, TRANS,"
-                               " END, and HELP.\n");
+                        printf("%sInvalid request. Supports CHECK, TRANS,"
+                               " END, and HELP.\n", OUTPUT);
                 }
         }
 }
