@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <limits.h>
 #include <signal.h>
+#include <pthread.h>
 #include "Bank.h" // Provides in-memory, volatile "database" & access methods
 #include "appserver.h"
 
@@ -12,6 +13,8 @@
 #define OUTPUT "< "
 #define MAX_INPUT_LEN 100
 #define MAX_FILENAME_LEN 100
+
+int g_running = 1;
 
 void main(int argc, char **argv)
 {
@@ -57,19 +60,21 @@ void main(int argc, char **argv)
                 exit(EXIT_FAILURE);
         }
 
+        printf("Spinning up threads\n");
+        int i = 0;
+        pthread_t thread_ids[num_workerthreads];
+        for (i = 0; i < num_workerthreads; i++) {
+                pthread_create(&thread_ids[i], NULL, worker_routine, 
+                                (void *) i);
+        }
+
         printf("Ready to accept input.\n");
-        
-        // Create a function that contains a while loop so that the
-        // threads continue to work until a global variable or other integer
-        // changes (end would change this get the threads to stop)
-        // Have a for loop to initialize all these threads
         // Need linked list of structs containing account id and mutex lock
         // The linked list itself must have a lock on it
-        //
         // The linked list is created in main thread and passed as an argument
         // to the worker threads' function
                 
-        while (1) {
+        while (g_running) {
                 printf("%s", PROMPT);
                 fgets(user_input, MAX_INPUT_LEN, stdin);
 
@@ -84,6 +89,13 @@ void main(int argc, char **argv)
                                " END, and HELP.\n", OUTPUT);
                 }
         }
+
+        // Wait for worker threads to finish before exiting program.
+        for (i = 0; i < num_workerthreads; i++) {
+                pthread_join(thread_ids[i], 0);
+        }
+        
+        exit(0);
 }
 
 // Accepts a pointer to the user's input as well as a pointer to the request ID

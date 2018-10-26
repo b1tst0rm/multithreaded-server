@@ -3,6 +3,10 @@ Note: `Bank.c`/`Bank.h` were provided by the instructor to provide a backend
 database. I wrote `appserver.c`/`appserver.h`. `testscript.pl` was also
 provided.
 
+## Usage
+Run `make` to compile the server and run the server with `./appserver`
+(among other arguments that the program accepts.
+
 ## Test Script
 
 To run the script use the command:
