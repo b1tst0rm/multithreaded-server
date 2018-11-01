@@ -31,7 +31,13 @@ struct buffer {
 
 struct pthread_args {
         struct buffer *cmd_buf;
+        struct account *accounts; // pointer to array of accounts
         int *running;
+};
+
+struct account {
+        pthread_mutex_t lock;
+        int value;
 };
 
 
@@ -45,9 +51,9 @@ int extract_cmd(struct buffer *cmd_buffer, char next_cmd[MAX_CMD_LEN]);
 void add_cmd(struct buffer *cmd_buffer, char command_to_add[MAX_CMD_LEN], int request_id);
 void *thread_routine(void *args);
 int check_input(char *user_in);
-int handle_request(char *request);
-int check();
-int trans();
+int handle_request(char *request, struct account *accounts);
+int check(struct account *accs, char *cmd);
+int trans(struct account *accs, char *cmd);
 
 // Main thread accepts user input and places commands into command buffer
 // (a linked list). The worker threads that the main thread creates place
@@ -72,7 +78,7 @@ void main(int argc, char **argv)
         command_buffer.head = NULL;
         int request_id = 1; // The transaction ID given to user
         struct pthread_args args;
-        
+ 
         // Prevent keyboard interrupts
         signal(SIGINT, handle_interrupt);
     
@@ -108,7 +114,7 @@ void main(int argc, char **argv)
                 perror("Failed to init bank accounts.");
                 exit(EXIT_FAILURE);
         }
-    
+        
         printf("Initializing command buffer mutex\n");
         if (pthread_mutex_init(&buffer_lock, NULL) != 0) {
                 perror("Failed to init command buffer mutex.");
@@ -119,12 +125,13 @@ void main(int argc, char **argv)
         int i = 0;
         args.cmd_buf = &command_buffer;
         args.running = &running;
+        args.accounts = malloc(sizeof(struct account)*num_accts);
         pthread_t thread_ids[num_workerthreads];
         for (i = 0; i < num_workerthreads; i++) {
                 if (pthread_create(&thread_ids[i], NULL, thread_routine, 
                                 (void *) &args) != 0) {
                         perror("pthread_create() error");
-                        exit(1);
+                        exit(EXIT_FAILURE);
                 }
         }
 
@@ -141,12 +148,15 @@ void main(int argc, char **argv)
 
                 if (valid_input == 1) {
                         add_cmd(&command_buffer, user_input, request_id);
+                        printf("%sID %d\n", OUTPUT, request_id);
                         request_id++; // increment transaction id for next command
                 } else if (strncmp(user_input, "END", 3) == 0) {
                         running = 0; // stop all new commands
-                        printf("Waiting for all threads to finish and exiting.\n");
+                        printf("Waiting for all threads to finish and "
+                               "exiting.\n");
                 } else {
-                        printf("Not a valid command.\n");
+                        printf("%sNot a valid command. Accepts CHECK, TRANS,"
+                               " and END.\n", OUTPUT);
                 }
         }
 
@@ -155,7 +165,7 @@ void main(int argc, char **argv)
                 pthread_join(thread_ids[i], NULL);
         }
  
-        exit(0);
+        exit(EXIT_SUCCESS);
 }
 
 // Returns 1 if user input acceptable, -1 otherwise
@@ -174,13 +184,13 @@ int check_input(char *user_in)
 
 // accepts a pointer to the user's input and returns 1 if a command was ran 
 // or -1 if failure occured.
-int handle_request(char *request)
+int handle_request(char *request, struct account *accounts)
 {
         if (strncmp(request, "CHECK ", 6) == 0) {
-                check();
+                check(accounts, request);
                 return 1;
         } else if (strncmp(request, "TRANS ", 6) == 0) {
-                trans();
+                trans(accounts, request);
                 return 1;
         } else {
                 // Disallowed request
@@ -188,13 +198,15 @@ int handle_request(char *request)
         }
 }
 
-int check()
+int check(struct account *accs, char *cmd)
 {
+        printf("in check\n");
         return 0;
 }
 
-int trans()
+int trans(struct account *accs, char *cmd)
 {
+        printf("in trans\n");
         return 0;
 }
 
@@ -202,7 +214,6 @@ void handle_interrupt()
 {
         printf("\n\nCTRL-C ignored. "
                "Please use the END command to exit program.\n\n");
-        return;
 }
 
 // Returns request ID (nonzero) if command extracted, 
@@ -275,7 +286,7 @@ void *thread_routine(void *args)
         while (*is_running) {
                 request = extract_cmd(routine_args->cmd_buf, curr_cmd);
                 if (request) {
-                        int response = handle_request(curr_cmd); 
+                        int response = handle_request(curr_cmd, routine_args->accounts); 
                         
                         if (response == -1) {
                                 printf("mega error, need to print in file\n");
