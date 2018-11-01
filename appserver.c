@@ -1,4 +1,5 @@
 // appserver.c
+// Run `make` in working directory to compile.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,12 +20,26 @@ struct node {
         char cmd[MAX_CMD_LEN]; // Command to be completed
         int request_id;
         struct node *next;     // Pointer to the next node in the list
-}
+};
+
+pthread_mutex_t buffer_lock; // Mutex to lock the entire command buffer
 
 struct buffer {
-        pthread_mutex_t lock; // Mutex to lock the entire buffer
         struct node *head;    // Points to the first element in Linked List
-}
+};
+
+struct pthread_args {
+        struct buffer *cmd_buf;
+        int *running;
+};
+
+
+// FUNCTION PROTOTYPES
+void handle_interrupt();
+int extract_cmd(struct buffer *cmd_buffer, char next_cmd[MAX_CMD_LEN]);
+void add_cmd(struct buffer *cmd_buffer, char command_to_add[MAX_CMD_LEN], int request_id);
+void *thread_routine(void *args);
+
 
 // Main thread accepts user input and places commands into command buffer
 // (a linked list). The worker threads that the main thread creates place
@@ -46,8 +61,12 @@ void main(int argc, char **argv)
         // Command buffer that main will place user input into and threads
         // will fetch from.
         struct buffer command_buffer;
+        command_buffer.head = NULL;
         int request_id = 1; // The transaction ID given to user
+        struct pthread_args args;
         
+        // Prevent keyboard interrupts
+        signal(SIGINT, handle_interrupt);
     
         if (argc != 4) {
                 printf("\nAppServer combined server and client program.\n");
@@ -76,39 +95,48 @@ void main(int argc, char **argv)
         getcwd(cwd, sizeof(cwd));
         printf("Log location: %s/%s\n", cwd, output_filename);
 
-        // Prevent keyboard interrupts
-        signal(SIGINT, handle_interrupt);
-
         printf("\nInitializing bank accounts.\n");
         if (initialize_accounts(num_accts) == 0) {
-                perror("Failed to initialize accounts.");
+                perror("Failed to init bank accounts.");
                 exit(EXIT_FAILURE);
         }
-
-//        printf("Spinning up threads\n");
-//        int i = 0;
-//        pthread_t thread_ids[num_workerthreads];
-//        for (i = 0; i < num_workerthreads; i++) {
-//                pthread_create(&thread_ids[i], NULL, worker_routine, 
-//                                (void *) i);
-//        }
+    
+        printf("Initializing command buffer mutex\n");
+        if (pthread_mutex_init(&buffer_lock, NULL) != 0) {
+                perror("Failed to init command buffer mutex.");
+                exit(EXIT_FAILURE);
+        }
+        
+        printf("Spinning up worker threads\n");
+        int i = 0;
+        args.cmd_buf = &command_buffer;
+        args.running = &running;
+        pthread_t thread_ids[num_workerthreads];
+        for (i = 0; i < num_workerthreads; i++) {
+                if (pthread_create(&thread_ids[i], NULL, thread_routine, 
+                                (void *) &args) != 0) {
+                        perror("pthread_create() error");
+                        exit(1);
+                }
+        }
 
         printf("Ready to accept input.\n");
-        
+       
+        // Accept user commands and add them to the command buffer 
         while (running) {
                 printf("%s", PROMPT);
                 fgets(user_input, MAX_CMD_LEN, stdin);
                 // Remove newline character at end of user input from stdin
                 user_input[strlen(user_input) - 1] = '\0';
-                add_cmd(command_buffer, user_input, request_id);
+                add_cmd(&command_buffer, user_input, request_id);
                 request_id++; // increment transaction id for next command
         }
 
-//        // Wait for worker threads to finish before exiting program.
-//        for (i = 0; i < num_workerthreads; i++) {
-//                pthread_join(thread_ids[i], 0);
-//        }
-//        
+        // Wait (blocks) for worker threads to finish before exiting program.
+        for (i = 0; i < num_workerthreads; i++) {
+                pthread_join(thread_ids[i], NULL);
+        }
+ 
         exit(0);
 }
 
@@ -144,93 +172,111 @@ void handle_interrupt()
         return;
 }
 
-int check()
-{
-        return 0;
-}
+//int check()
+//{
+//        return 0;
+//}
+//
+//int trans()
+//{
+//        return 0;
+//}
+//
+//void end()
+//{
+//        printf("Waiting for all threads to finish...\n");
+//        printf("Cleaning up and exiting program, goodbye.\n");
+//        exit(EXIT_SUCCESS);
+//}
+//
+//void help()
+//{
+//        printf("~ Help Desk ~\n");
+//        printf("CHECK <accountid>\n   Returns: <requestID> BAL "
+//               "<balance>\n");
+//        printf("TRANS <acct1> <amount1> <acct2> <amount2> ...\n   "
+//               "Returns: <requestID> OK on success or <requestID> ISF "
+//               "<acctid> on first failed account\n");
+//        printf("HELP\n   Returns: this information\n");
+//        printf("END\n   Exits the program\n");
+//        return;
+//}
 
-int trans()
-{
-        return 0;
-}
-
-void end()
-{
-        printf("Waiting for all threads to finish...\n");
-        printf("Cleaning up and exiting program, goodbye.\n");
-        exit(EXIT_SUCCESS);
-}
-
-void help()
-{
-        printf("~ Help Desk ~\n");
-        printf("CHECK <accountid>\n   Returns: <requestID> BAL "
-               "<balance>\n");
-        printf("TRANS <acct1> <amount1> <acct2> <amount2> ...\n   "
-               "Returns: <requestID> OK on success or <requestID> ISF "
-               "<acctid> on first failed account\n");
-        printf("HELP\n   Returns: this information\n");
-        printf("END\n   Exits the program\n");
-        return;
-}
-
-// Returns request ID (nonzero) if command extracted, 0 if no command to extract.
+// Returns request ID (nonzero) if command extracted, 
+// 0 if no command to extract.
 // If command exits and is retrieved, it is placed in the given next_cmd
 // array and is deleted from the Linked List. Head is updated to point
 // to the next command to be processed.
-int extract_cmd(struct buffer cmd_buffer, char next_cmd[MAX_CMD_LEN]) {
+int extract_cmd(struct buffer *cmd_buffer, char next_cmd[MAX_CMD_LEN])
+{
         int retval;
 
-        pthread_mutex_lock(&cmd_buffer.lock);
+        pthread_mutex_lock(&buffer_lock);
  
-        if (cmd_buffer.head != NULL) {
-                strcpy(next_cmd, cmd_buffer.head->cmd);
-                retval = cmd_buffer.head->request_id;
+        // If there is command in the buffer...
+        if (cmd_buffer->head != NULL) {
+                // *struct1.blah === struct1->blah
+                printf("extract_cmd: head's cmd: %s\n", cmd_buffer->head->cmd);
+                strcpy(next_cmd, cmd_buffer->head->cmd);
+                retval = cmd_buffer->head->request_id;
                 // Delete the command from the Linked List by resetting 
                 // head to next node.
-                cmd_buffer.head = cmd_buffer.head->next;
+                struct node *new_next = cmd_buffer->head->next;
+                free(cmd_buffer->head); // free previously malloc-ed pointer
+                cmd_buffer->head = new_next;
         } else {
                 retval = 0;
         }
  
-        pthread_mutux_unlock(&cmd_buffer.lock);
+        pthread_mutex_unlock(&buffer_lock);
 
         return retval;
 }
 
-// Add a node to the Linked List and update head. Returns nothing as this
+// Add a node to the end of Linked List and update head. Returns nothing as this
 // should always succeed. Should only be called by the main thread.
-void add_cmd(struct buffer cmd_buffer, char command_to_add[MAX_CMD_LEN], int request_id) {
-        struct node node_to_add;
-        pthread_mutex_lock(&cmd_buffer.lock);
+void add_cmd(struct buffer *cmd_buffer, char command_to_add[MAX_CMD_LEN], int request_id)
+{
+        pthread_mutex_lock(&buffer_lock);
 
         // Build new node
-        strcpy(node_to_add.cmd, command_to_add);
-        node_to_add.next = NULL; // Node will be placed at the END of the list
-        node_to_add.request_id = request_id
+        struct node *node_to_add = (struct node*)malloc(sizeof(struct node));
+        strcpy(node_to_add->cmd, command_to_add);
+        node_to_add->next = NULL; // Node will be placed at the END of the list
+        node_to_add->request_id = request_id;
 
         // Append the new node to the end of the list
-        struct node *find_end = cmd_buffer.head;
-        while (find_end != NULL) {
-                find_end = find_end->next;
+        struct node *find_end = cmd_buffer->head;
+        if (cmd_buffer->head == NULL) {
+                // Then this is the FIRST command in the buffer
+                cmd_buffer->head = node_to_add;
+        } else {
+                // then this is NOT the first command in the buffer
+                while (find_end->next != NULL) {
+                        find_end = find_end->next;
+                }
+                find_end->next = node_to_add;
         }
-        find_end->next = &node_to_add;
-
-        pthread_mutux_unlock(&cmd_buffer.lock);
+ 
+        pthread_mutex_unlock(&buffer_lock);
 }
 
 
 // This is the function that the worker threads will be assigned.
-void thread_routine(struct buffer *cmd_buf, int *running) {
+void *thread_routine(void *args)
+{
+        struct pthread_args *routine_args = (struct pthread_args*) args;
         char curr_cmd[MAX_CMD_LEN];
-        int request; 
+        int request;
+        int *isRunningPtr = routine_args->running;
 
-        while (*running) {
-                request = extract_cmd(*cmd_buf, curr_cmd);
+        while (*isRunningPtr) {
+                request = extract_cmd(routine_args->cmd_buf, curr_cmd);
 
                 if (request) {
                         // Run it
-                        printf("Worker got request ID %d: %s\n", request, curr_cmd);
+                        pthread_t tid = pthread_self();
+                        printf("\nWorker %ld got request ID %d: %s\n", tid, request, curr_cmd);
                         // Do something with it
                         //transac_attempt = handle_request(user_input, &requestID);
                         //
