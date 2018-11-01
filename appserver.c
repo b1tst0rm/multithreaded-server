@@ -200,7 +200,26 @@ int handle_request(char *request, struct account *accounts)
 
 int check(struct account *accs, char *cmd)
 {
-        printf("in check\n");
+        // Parse command for account number
+        int begin = 6;
+        int end = 6;
+        while(cmd[end] != '\0' && cmd[end] != ' ') {
+                end++;
+        }
+        char num[(end-begin) + 1];
+        char *begin_arr = &cmd[begin];
+        strncpy((char *) num, begin_arr, (end-begin) + 1);
+
+        int account_num = atoi(num);
+        
+        printf("Account num %d\n", account_num);
+
+        pthread_mutex_lock(&accs[account_num].lock);
+        int amount = read_account(account_num);
+        accs[account_num].value = amount;
+        pthread_mutex_unlock(&accs[account_num].lock);
+
+        printf("Amount is %d\n", amount);
         return 0;
 }
 
