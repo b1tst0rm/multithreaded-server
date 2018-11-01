@@ -1,6 +1,6 @@
 CC = gcc
 
-all: appserver
+all: clean appserver
 
 appserver:
 	gcc -pthread -o appserver appserver.c Bank.c
