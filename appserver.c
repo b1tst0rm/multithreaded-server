@@ -1,5 +1,5 @@
 // appserver.c
-// Run `make` in working directory to compile.
+// Run `make clean` followed by `make` in working directory to compile.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,13 +8,15 @@
 #include <signal.h>
 #include <pthread.h>
 #include "Bank.h" // Provides in-memory, volatile "database" & access methods
-#include "appserver.h"
+
 
 #define PROMPT "> "
 #define OUTPUT "< "
 #define MAX_CMD_LEN 125
 #define MAX_FILENAME_LEN 100
 
+
+// CUSTOM STRUCTURES
 // A node in the Linked List data structure for storing commands
 struct node {
         char cmd[MAX_CMD_LEN]; // Command to be completed
@@ -22,7 +24,6 @@ struct node {
         struct node *next;     // Pointer to the next node in the list
 };
 
-pthread_mutex_t buffer_lock; // Mutex to lock the entire command buffer
 
 struct buffer {
         struct node *head;    // Points to the first element in Linked List
@@ -34,12 +35,19 @@ struct pthread_args {
 };
 
 
+// GLOBAL VARIABLES
+pthread_mutex_t buffer_lock; // Mutex to lock the entire command buffer
+
+
 // FUNCTION PROTOTYPES
 void handle_interrupt();
 int extract_cmd(struct buffer *cmd_buffer, char next_cmd[MAX_CMD_LEN]);
 void add_cmd(struct buffer *cmd_buffer, char command_to_add[MAX_CMD_LEN], int request_id);
 void *thread_routine(void *args);
-
+int check_input(char *user_in);
+int handle_request(char *request);
+int check();
+int trans();
 
 // Main thread accepts user input and places commands into command buffer
 // (a linked list). The worker threads that the main thread creates place
@@ -126,10 +134,20 @@ void main(int argc, char **argv)
         while (running) {
                 printf("%s", PROMPT);
                 fgets(user_input, MAX_CMD_LEN, stdin);
+                check_input(user_input);
                 // Remove newline character at end of user input from stdin
                 user_input[strlen(user_input) - 1] = '\0';
-                add_cmd(&command_buffer, user_input, request_id);
-                request_id++; // increment transaction id for next command
+                int valid_input = check_input(user_input);
+
+                if (valid_input == 1) {
+                        add_cmd(&command_buffer, user_input, request_id);
+                        request_id++; // increment transaction id for next command
+                } else if (strncmp(user_input, "END", 3) == 0) {
+                        running = 0; // stop all new commands
+                        printf("Waiting for all threads to finish and exiting.\n");
+                } else {
+                        printf("Not a valid command.\n");
+                }
         }
 
         // Wait (blocks) for worker threads to finish before exiting program.
@@ -140,30 +158,45 @@ void main(int argc, char **argv)
         exit(0);
 }
 
-// Accepts a pointer to the user's input as well as a pointer to the request ID
-// and returns 1 if a command was ran, 0 if help was displayed, or -1 if 
-// invalid request was given.
-//int handle_request(char *request, int *id)
-//{
-//        if (strcmp(request, "END") == 0) {
-//                end();
-//                return 1; 
-//        } else if (strncmp(request, "CHECK", 5) == 0) {
-//                *id = *id + 1;
-//                check();
-//                return 1;
-//        } else if (strncmp(request, "TRANS", 5) == 0) {
-//                *id = *id + 1;
-//                trans();
-//                return 1;
-//        } else if (strncmp(request, "HELP", 4) == 0) {
-//                help();
-//                return 0;
-//        } else {
-//                // Disallowed request
-//                return -1;
-//        }
-//}
+// Returns 1 if user input acceptable, -1 otherwise
+int check_input(char *user_in)
+{
+        if (strncmp(user_in, "CHECK ", 6) == 0) {
+                return 1;
+        } else if (strncmp(user_in, "TRANS ", 6) == 0) {
+                return 1;
+        } else {
+                // disallowed request
+                return -1;
+        }
+}
+
+
+// accepts a pointer to the user's input and returns 1 if a command was ran 
+// or -1 if failure occured.
+int handle_request(char *request)
+{
+        if (strncmp(request, "CHECK ", 6) == 0) {
+                check();
+                return 1;
+        } else if (strncmp(request, "TRANS ", 6) == 0) {
+                trans();
+                return 1;
+        } else {
+                // Disallowed request
+                return -1;
+        }
+}
+
+int check()
+{
+        return 0;
+}
+
+int trans()
+{
+        return 0;
+}
 
 void handle_interrupt()
 {
@@ -172,51 +205,20 @@ void handle_interrupt()
         return;
 }
 
-//int check()
-//{
-//        return 0;
-//}
-//
-//int trans()
-//{
-//        return 0;
-//}
-//
-//void end()
-//{
-//        printf("Waiting for all threads to finish...\n");
-//        printf("Cleaning up and exiting program, goodbye.\n");
-//        exit(EXIT_SUCCESS);
-//}
-//
-//void help()
-//{
-//        printf("~ Help Desk ~\n");
-//        printf("CHECK <accountid>\n   Returns: <requestID> BAL "
-//               "<balance>\n");
-//        printf("TRANS <acct1> <amount1> <acct2> <amount2> ...\n   "
-//               "Returns: <requestID> OK on success or <requestID> ISF "
-//               "<acctid> on first failed account\n");
-//        printf("HELP\n   Returns: this information\n");
-//        printf("END\n   Exits the program\n");
-//        return;
-//}
-
 // Returns request ID (nonzero) if command extracted, 
 // 0 if no command to extract.
-// If command exits and is retrieved, it is placed in the given next_cmd
-// array and is deleted from the Linked List. Head is updated to point
-// to the next command to be processed.
+// If command exists and is retrieved from beginning of list, 
+// it is placed in the given next_cmd array and is deleted from the 
+// Linked List. Head is updated to point to the next command to be processed.
 int extract_cmd(struct buffer *cmd_buffer, char next_cmd[MAX_CMD_LEN])
 {
-        int retval;
+        int retval = 0;
 
         pthread_mutex_lock(&buffer_lock);
  
         // If there is command in the buffer...
         if (cmd_buffer->head != NULL) {
                 // *struct1.blah === struct1->blah
-                printf("extract_cmd: head's cmd: %s\n", cmd_buffer->head->cmd);
                 strcpy(next_cmd, cmd_buffer->head->cmd);
                 retval = cmd_buffer->head->request_id;
                 // Delete the command from the Linked List by resetting 
@@ -268,27 +270,21 @@ void *thread_routine(void *args)
         struct pthread_args *routine_args = (struct pthread_args*) args;
         char curr_cmd[MAX_CMD_LEN];
         int request;
-        int *isRunningPtr = routine_args->running;
+        int *is_running = routine_args->running;
 
-        while (*isRunningPtr) {
+        while (*is_running) {
                 request = extract_cmd(routine_args->cmd_buf, curr_cmd);
-
                 if (request) {
-                        // Run it
-                        pthread_t tid = pthread_self();
-                        printf("\nWorker %ld got request ID %d: %s\n", tid, request, curr_cmd);
-                        // Do something with it
-                        //transac_attempt = handle_request(user_input, &requestID);
-                        //
-                        //if (transac_attempt == 1) {
-                        //        printf("%sID %d\n", OUTPUT, requestID);
-                        //} else if (transac_attempt < 0) {
-                        //        printf("%sInvalid request. Supports CHECK, TRANS,"
-                        //               " END, and HELP.\n", OUTPUT);
-                        //}
+                        int response = handle_request(curr_cmd); 
+                        
+                        if (response == -1) {
+                                printf("mega error, need to print in file\n");
+                        } else if (response == 0) {
+                                *is_running = 0;   
+                        }
                 } else {
                         // Do nothing
                 }
         }
-        printf("Exiting thread routine\n");
+        printf("Thread %ld is exiting.\n", pthread_self());
 }
