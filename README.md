@@ -1,34 +1,43 @@
-# cpre308-project2: Multithreaded server
-Note: `Bank.c`/`Bank.h` were provided by the instructor to provide a backend
-database. I wrote `appserver.c`/`appserver.h`. `testscript.pl` was also
-provided.
+# Multithreaded command line server
+A multithread command line server written in C that performs balance
+checks and transactions on a simple in-memory database.
+
+`appserver.c` uses fine-grain mutex locking for each account. A global
+lock is used on a command buffer that is implemented using a linked
+list data structure.
+
+`appserver-coarse.c` provides the same functionality but uses coarse-grain
+mutex locking in that each thread locks the entire bank (all accounts) when
+it needs to access account(s). This decreases concurrency and, in most cases,
+hurts performance.
+
+Note: `Bank.c`/`Bank.h` were provided by another entity and not written
+by myself.
 
 ## Usage
-Run `make` to compile the server and run the server with `./appserver`
-(among other arguments that the program accepts.
+Run `make` (requires GCC) to compile the server and run the server with:
 
-## Test Script
+`./appserver <worker threads> <accounts> <output file>`
 
-To run the script use the command:
-`./testscript.pl ./appserver [numThreads] [numAccounts] [seed]`
-For example, a test with 10 threads, 1000 accounts, and a seed of 0 would be:
-`./testscript.pl ./appserver 10 1000 0`
+`worker threads`: number of worker threads to use in the program. The workers
+pull user-inputted commands from command buffer and execute them, writing
+successful output to `output file`
 
-If the test fails, you should receive some message `ERR: <error message>` at 
-the end of the script output.
+`accounts`: number of accounts in the bank, these are numbered 1 to `accounts`
 
-The script will operate as follows:
+`output file`: name of the log file that threads will output to upon command
+completion - use `tail -f <output file>` to watch output live
 
-1) 1000000 is added to every account and the script waits to allow your server 
-to process all these requests
-1) 300 random transactions occur (these are based off the seed value provided) 
-and the script then waits to allow your server to process all the requests
-1) The balance of every account is checked, followed by an END command and the 
-script then waits for your server to finish
-1) The script checks the output file  (which is stored in testout-xxx, where 
-xxx is some number) and reports back if it finds and discrepancies.
+## Commands
+Once running the program, it will only accept the following syntax:
+`CHECK <account number`: fetches the current balance for given account number
+and places output into file in following format: `<request id> BAL <balance> TIME <time started> <time ended>`
 
-In some cases if the tested program does not process transactions as fast as 
-expected, step four will start before step three has finished causing the test 
-script to report a failure. If this is the case increase the `$testSleepTime` 
-variable on line 31 of the test script.
+`TRANS <account number> <amount>`: adds the amount to the account number's balance.
+Negative numbers subtract from the balance. If the balance falls below zero, all transactions in the same
+line are voided and ISF is printed in the output file. Else, the following format appears
+upon successful transaction: `<request id> OK TIME <time started> <time ended>` ... note that
+you may add up to 10 transactions on one TRANS command. For example, `TRANS 5 10 6 10 7 10` would
+place 10 cents into accounts 5, 6 and 7.
+
+`END`: waits for threads to complete all current commands and exits the program gracefully

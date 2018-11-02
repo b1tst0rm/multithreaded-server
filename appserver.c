@@ -1,5 +1,3 @@
-// appserver.c
-// Run `make` in working directory to compile.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -57,7 +55,6 @@ int extract_cmd(struct buffer *cmd_buffer, struct node *curr_cmd_info);
 void add_cmd(struct buffer *cmd_buffer, char command_to_add[MAX_CMD_LEN], int request_id, struct timeval tv_begin);
 void *thread_routine(void *args);
 int check_input(char *user_in);
-int handle_request(char *request, struct account *accounts);
 void check(struct account *accs, char *cmd, char *log_filename, struct timeval tv_begin, int request_id);
 void trans(struct account *accs, char *cmd, char *log_filename, struct timeval tv_begin, int request_id);
 int parse_check_cmd(char *cmd);
@@ -67,7 +64,7 @@ int parse_trans_cmd(char *cmd, struct transaction transactions[10]);
 // (a linked list). The worker threads that the main thread creates place
 // a lock on this buffer, read a command, execute it, and release the buffer.
 // The worker threads lock user accounts in the array of structs when
-// they carry out TRANS or CHECK commands and may lock more than one account 
+// they carry out TRANS or CHECK commands and may lock more than one account
 // at any given time. If an account that is needed is locked, that thread
 // must wait until the account resource becomes available.
 // If the user administers the END command, the main thread waits until
@@ -87,10 +84,10 @@ void main(int argc, char **argv)
         int request_id = 1; // The transaction ID given to user
         struct pthread_args args;
         struct timeval tv_begin; // timestamp of when a command begins
- 
+
         // Prevent keyboard interrupts
         signal(SIGINT, handle_interrupt);
-    
+
         if (argc != 4) {
                 printf("\nAppServer combined server and client program.\n");
                 printf("\nUSAGE: ./appserver <# of worker threads> "
@@ -98,10 +95,14 @@ void main(int argc, char **argv)
                 exit(EXIT_FAILURE);
         }
 
-        // Fetch and store command-line arguments        
+        // Fetch and store command-line arguments
         num_workerthreads = atoi(argv[1]);
         num_accts = atoi(argv[2]);
         strncpy(output_filename, argv[3], sizeof(argv[3]));
+
+        // Create file so users can start tailing immediately
+        FILE *fp = fopen(output_filename, "a");
+        fclose(fp);
 
         if (num_workerthreads < 1) {
                 printf("\nWorker threads must be at least 1 or more."
@@ -123,22 +124,22 @@ void main(int argc, char **argv)
                 perror("Failed to init bank accounts.");
                 exit(EXIT_FAILURE);
         }
-        
+
         printf("Initializing command buffer mutex\n");
         if (pthread_mutex_init(&buffer_lock, NULL) != 0) {
                 perror("Failed to init command buffer mutex.");
                 exit(EXIT_FAILURE);
         }
-        
+
         printf("Spinning up worker threads\n");
         int i = 0;
         args.cmd_buf = &command_buffer;
         args.running = &running;
-        args.accounts = malloc(sizeof(struct account)*num_accts);
+        args.accounts = (struct account*)malloc(sizeof(struct account)*num_accts);
         strcpy(args.log_filename, output_filename);
         pthread_t thread_ids[num_workerthreads];
         for (i = 0; i < num_workerthreads; i++) {
-                if (pthread_create(&thread_ids[i], NULL, thread_routine, 
+                if (pthread_create(&thread_ids[i], NULL, thread_routine,
                                 (void *) &args) != 0) {
                         perror("pthread_create() error");
                         exit(EXIT_FAILURE);
@@ -146,8 +147,8 @@ void main(int argc, char **argv)
         }
 
         printf("Ready to accept input.\n");
-       
-        // Accept user commands and add them to the command buffer 
+
+        // Accept user commands and add them to the command buffer
         while (running) {
                 printf("%s", PROMPT);
                 fgets(user_input, MAX_CMD_LEN, stdin);
@@ -168,18 +169,18 @@ void main(int argc, char **argv)
                                         add_cmd(&command_buffer, user_input, request_id, tv_begin);
                                         printf("%sID %d\n", OUTPUT, request_id);
                                         request_id++; // increment transaction id for next command
-                                } 
+                                }
                         } else {
                                 // TRANS
-                                struct transaction *transactions = malloc(sizeof(struct transaction)*10);
+                                struct transaction *transactions = (struct transaction*)malloc(sizeof(struct transaction)*10);
                                 int num_transactions = parse_trans_cmd(user_input, transactions);
 
                                 int i = 0;
                                 int isValidTransaction = 1;
                                 while (i < num_transactions) {
-                                        if (transactions[i].account_number > 
-                                            num_accts || 
-                                            transactions[i].account_number < 1) 
+                                        if (transactions[i].account_number >
+                                            num_accts ||
+                                            transactions[i].account_number < 1)
                                         {
                                                 isValidTransaction = 0;
                                         }
@@ -192,6 +193,7 @@ void main(int argc, char **argv)
                                 } else {
                                         printf("Transaction failed, contained invalid account number.\n");
                                 }
+                                free(transactions);
                         }
                 } else if (strncmp(user_input, "END", 3) == 0) {
                         running = 0; // stop all new commands
@@ -207,7 +209,9 @@ void main(int argc, char **argv)
         for (i = 0; i < num_workerthreads; i++) {
                 pthread_join(thread_ids[i], NULL);
         }
- 
+
+        free(args.accounts);
+
         exit(EXIT_SUCCESS);
 }
 
@@ -244,8 +248,8 @@ void check(struct account *accs, char *cmd, char *log_filename, struct timeval t
 {
         FILE *fp;
         int account_num = parse_check_cmd(cmd);
- 
-        pthread_mutex_lock(&accs[account_num].lock);
+
+        pthread_mutex_lock(&accs[account_num - 1].lock);
         int amount = read_account(account_num);
         // Time that this command finishes
         struct timeval tv_end;
@@ -254,7 +258,7 @@ void check(struct account *accs, char *cmd, char *log_filename, struct timeval t
         fp = fopen(log_filename, "a");
         fprintf(fp, "%d BAL %d TIME %ld.%06ld %ld.%06ld\n", request_id, amount, tv_begin.tv_sec, tv_begin.tv_usec, tv_end.tv_sec, tv_end.tv_usec);
         fclose(fp);
-        pthread_mutex_unlock(&accs[account_num].lock);
+        pthread_mutex_unlock(&accs[account_num - 1].lock);
 }
 
 // Returns pointer to array of SORTED (lowest acc num to highest) transaction structs
@@ -276,7 +280,7 @@ int parse_trans_cmd(char *cmd, struct transaction transactions[10])
                 char *begin_arr = &cmd[begin];
                 strncpy((char *) num, begin_arr, (end-begin) + 1);
                 numbers[count] = atoi(num);
- 
+
                 // Reset for the next number to extract
                 count++;
                 end += 1;
@@ -295,7 +299,7 @@ int parse_trans_cmd(char *cmd, struct transaction transactions[10])
                 transactions[trans_counter].value = numbers[i+1];
                 trans_counter++;
         }
-    
+
         // Need to sort the struct array smallest account_number to biggest
         int j;
         struct transaction temp;
@@ -314,7 +318,7 @@ int parse_trans_cmd(char *cmd, struct transaction transactions[10])
 
 void trans(struct account *accs, char *cmd, char *log_filename, struct timeval tv_begin, int request_id)
 {
-        struct transaction *transactions = malloc(sizeof(struct transaction)*10);
+        struct transaction *transactions = (struct transaction*)malloc(sizeof(struct transaction)*10);
         int num_transactions = parse_trans_cmd(cmd, transactions);
         FILE *fp;
         int ISF = 0;
@@ -327,7 +331,7 @@ void trans(struct account *accs, char *cmd, char *log_filename, struct timeval t
         // Lock all the accounts, starting with smallest account number
         int i = 0;
         for (i = 0; i < num_transactions; i++) {
-                pthread_mutex_lock(&accs[transactions[i].account_number].lock);
+                pthread_mutex_lock(&accs[transactions[i].account_number - 1].lock);
         }
 
         // Do the transactions
@@ -335,7 +339,7 @@ void trans(struct account *accs, char *cmd, char *log_filename, struct timeval t
                 current_account = transactions[i].account_number;
                 current_balance = read_account(current_account);
                 trans_value = transactions[i].value;
-            
+
                 predicted_value = current_balance + trans_value;
                 if (predicted_value < 0 && ISF == 0) {
                         ISF = current_account;
@@ -356,20 +360,21 @@ void trans(struct account *accs, char *cmd, char *log_filename, struct timeval t
         gettimeofday(&tv_end, NULL);
         // Append to logfile
         fp = fopen(log_filename, "a");
-        
+
         if (ISF != 0) {
                 // then ISF == account number with insufficient funds
                 fprintf(fp, "%d ISF %d TIME %ld.%06ld %ld.%06ld\n", request_id, ISF, tv_begin.tv_sec, tv_begin.tv_usec, tv_end.tv_sec, tv_end.tv_usec);
         } else {
                 fprintf(fp, "%d OK TIME %ld.%06ld %ld.%06ld\n", request_id, tv_begin.tv_sec, tv_begin.tv_usec, tv_end.tv_sec, tv_end.tv_usec);
         }
-        
+
         fclose(fp);
 
         // Unlock all the accounts
         for (i = 0; i < num_transactions; i++) {
-                pthread_mutex_unlock(&accs[transactions[i].account_number].lock);
+                pthread_mutex_unlock(&accs[transactions[i].account_number - 1].lock);
         }
+        free(transactions);
 }
 
 void handle_interrupt()
@@ -378,24 +383,24 @@ void handle_interrupt()
                "Please use the END command to exit program.\n\n");
 }
 
-// Returns request ID (nonzero) if command extracted, 
+// Returns request ID (nonzero) if command extracted,
 // 0 if no command to extract.
-// If command exists and is retrieved from beginning of list, 
-// it is placed in the given next_cmd array and is deleted from the 
+// If command exists and is retrieved from beginning of list,
+// it is placed in the given next_cmd array and is deleted from the
 // Linked List. Head is updated to point to the next command to be processed.
 int extract_cmd(struct buffer *cmd_buffer, struct node *curr_cmd_info)
 {
         int retval = 0;
 
         pthread_mutex_lock(&buffer_lock);
- 
+
         // If there is command in the buffer...
         if (cmd_buffer->head != NULL) {
                 // *struct1.blah === struct1->blah
                 strcpy(curr_cmd_info->cmd, cmd_buffer->head->cmd);
                 curr_cmd_info->request_id = cmd_buffer->head->request_id;
                 curr_cmd_info->tv_begin = cmd_buffer->head->tv_begin;
-                // Delete the command from the Linked List by resetting 
+                // Delete the command from the Linked List by resetting
                 // head to next node.
                 struct node *new_next = cmd_buffer->head->next;
                 free(cmd_buffer->head); // free previously malloc-ed pointer
@@ -404,7 +409,7 @@ int extract_cmd(struct buffer *cmd_buffer, struct node *curr_cmd_info)
         } else {
                 retval = 0;
         }
- 
+
         pthread_mutex_unlock(&buffer_lock);
 
         return retval;
@@ -435,7 +440,7 @@ void add_cmd(struct buffer *cmd_buffer, char command_to_add[MAX_CMD_LEN], int re
                 }
                 find_end->next = node_to_add;
         }
- 
+
         pthread_mutex_unlock(&buffer_lock);
 }
 
@@ -451,14 +456,14 @@ void *thread_routine(void *args)
                 request = extract_cmd(routine_args->cmd_buf, &current_command_info);
                 if (request) {
                         if (strncmp(current_command_info.cmd, "CHECK ", 6) == 0) {
-                                check(routine_args->accounts, 
-                                      current_command_info.cmd, log_file_loc, 
+                                check(routine_args->accounts,
+                                      current_command_info.cmd, log_file_loc,
                                       current_command_info.tv_begin,
                                       current_command_info.request_id);
                         } else if (strncmp(current_command_info.cmd, "TRANS ", 6) == 0) {
-                                trans(routine_args->accounts, 
-                                      current_command_info.cmd, log_file_loc, 
-                                      current_command_info.tv_begin, 
+                                trans(routine_args->accounts,
+                                      current_command_info.cmd, log_file_loc,
+                                      current_command_info.tv_begin,
                                       current_command_info.request_id);
                         } else {
                                 // Do nothing, unrecognized command
